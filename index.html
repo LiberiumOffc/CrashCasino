@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="text/javascript">
         // --- Game State Variables ---
-        let balance = 1000; // Начальный баланс (₽)
+        let balance = 1000; // Изменено: Начальный баланс (₽)
         let level = 1;
         let xp = 0;
         let workerInventory = []; // [{ id: string, name: string, rarity: string, income: number, isActive: boolean, lastIncomeTime: number, lore: string }]
@@ -16,6 +16,7 @@
             wins: 0, 
             completed: {} 
         };
+        let usedPromoCodes = []; // НОВОЕ: Для отслеживания использованных промокодов
 
         const XP_PER_GAME = 1; // 1 XP за игру
         const STORAGE_KEY = 'crushGameDataV2'; // Новый ключ для localStorage
@@ -35,6 +36,14 @@
         let lastWorkerId = 0; // Для генерации уникальных ID работников
         
         // --- Configuration ---
+
+        // Конфигурация Промокодов
+        const PROMO_CODES = {
+            'MerryCristmas': {
+                reward: 'CASE_JOBERS',
+                description_ru: 'Подарок: 1 Кейс "Jobers"',
+            }
+        };
 
         // Конфигурация Кейсов и Работников
         const CASE_PRICE = 10000; // Цена открытия кейса
@@ -74,6 +83,10 @@
         // UI Elements
         let balanceElement, levelElement, xpElement, multiplierElement, betInputElement, playButton, gameArea, messageBox, rocketIcon, statusText;
         let gameTabButton, workTabButton, workListElement, caseOpeningModal;
+        
+        // НОВЫЕ UI элементы для Промокодов (устанавливаются в renderWorkView)
+        let promoCodeInputElement;
+        let promoCodeMessageElement;
 
         // --- Utility Functions ---
 
@@ -84,10 +97,11 @@
                     balance: balance,
                     level: level,
                     xp: xp,
-                    workerInventory: workerInventory, // Используем новый инвентарь
+                    workerInventory: workerInventory, 
                     jobCooldowns: jobCooldowns,
                     questProgress: questProgress,
-                    lastWorkerId: lastWorkerId
+                    lastWorkerId: lastWorkerId,
+                    usedPromoCodes: usedPromoCodes // НОВОЕ: Сохраняем использованные коды
                 };
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToStore));
             } catch (e) {
@@ -102,11 +116,12 @@
                 const storedData = localStorage.getItem(STORAGE_KEY);
                 if (storedData) {
                     const data = JSON.parse(storedData);
-                    balance = data.balance || 10000;
+                    balance = data.balance || 1000;
                     level = data.level || 1;
                     xp = data.xp || 0;
                     jobCooldowns = data.jobCooldowns || {}; 
                     questProgress = data.questProgress || { wins: 0, completed: {} };
+                    usedPromoCodes = data.usedPromoCodes || []; // НОВОЕ: Загружаем использованные коды
                     if (!questProgress.completed) questProgress.completed = {};
 
                     // Загрузка инвентаря
@@ -121,9 +136,9 @@
                     });
 
                     // Автоматическое пополнение баланса для тестирования
-                    if (balance < 10) {
-                        balance = 10000;
-                        messageBox.textContent = "Баланс автоматически восстановлен до 10000 ₽.";
+                    if (balance < 10) { 
+                        balance = 1000; 
+                        messageBox.textContent = "Баланс автоматически восстановлен до 1000 ₽.";
                         messageBox.classList.remove('hidden');
                         setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
                         saveState(); 
@@ -138,14 +153,15 @@
             }
             
             // Инициализация, если данных нет
-            balance = 10000;
+            balance = 1000; 
             level = 1;
             xp = 0;
             jobCooldowns = {};
             questProgress = { wins: 0, completed: {} };
             workerInventory = [];
             lastWorkerId = 0;
-            messageBox.textContent = "Новый пользователь. Начальный баланс 10000 ₽, Ур. 1.";
+            usedPromoCodes = []; // НОВОЕ: Инициализация
+            messageBox.textContent = "Новый пользователь. Начальный баланс 1000 ₽, Ур. 1.";
             messageBox.classList.remove('hidden');
             setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
             return false; 
@@ -293,6 +309,94 @@
              setInterval(applyLivePassiveIncome, 1000);
         };
         
+        // --- Promo Code Logic ---
+        
+        /** Отображает сообщение, специфичное для Промокодов/Работ */
+        const setWorkMessage = (message, colorClass) => {
+            if (!promoCodeMessageElement) return;
+
+            // Сбрасываем и устанавливаем классы
+            promoCodeMessageElement.className = `p-2 rounded-lg text-sm text-center font-semibold mt-2 ${colorClass} bg-opacity-20`;
+            promoCodeMessageElement.classList.add(colorClass.replace('text-', 'bg-') + '-900', 'bg-opacity-20');
+            promoCodeMessageElement.textContent = message;
+            promoCodeMessageElement.classList.remove('hidden');
+            
+            // Удаляем сообщение через 5 секунд
+            setTimeout(() => {
+                 if (promoCodeMessageElement) {
+                     promoCodeMessageElement.classList.add('hidden');
+                     promoCodeMessageElement.textContent = '';
+                 }
+            }, 5000);
+        };
+
+        /** Активирует промокод */
+        const redeemPromoCode = (code) => {
+            code = code.trim();
+            const upperCaseCode = code.toUpperCase();
+            const codeData = PROMO_CODES[code];
+            
+            if (!code) {
+                setWorkMessage('Пожалуйста, введите промокод.', 'text-red-400');
+                return;
+            }
+
+            if (!codeData) {
+                setWorkMessage('Неверный промокод.', 'text-red-400');
+                return;
+            }
+            
+            if (usedPromoCodes.includes(code)) {
+                setWorkMessage(`Промокод "${code}" уже использован.`, 'text-red-400');
+                return;
+            }
+
+            // --- Применяем награду ---
+            if (codeData.reward === 'CASE_JOBERS') {
+                // Выдаем бесплатного работника (без вычета цены)
+                
+                // 1. Ролл редкости
+                const rolledTier = rollRarity();
+                
+                // 2. Генерация дохода
+                const minIncome = rolledTier.range[0];
+                const maxIncome = rolledTier.range[1];
+                const generatedIncome = Math.floor(Math.random() * (maxIncome - minIncome + 1)) + minIncome;
+
+                // 3. Создание работника
+                lastWorkerId++;
+                const newWorker = {
+                    id: `worker-${lastWorkerId}`,
+                    name: `(Промо) ${rolledTier.rarity} Работник #${lastWorkerId}`,
+                    rarity: rolledTier.rarity,
+                    income: generatedIncome,
+                    isActive: false, 
+                    lastIncomeTime: 0,
+                    lore: rolledTier.lore
+                };
+                
+                workerInventory.push(newWorker);
+
+                // 4. Отмечаем как использованный и сохраняем
+                usedPromoCodes.push(code);
+                saveState();
+                
+                const colorClass = getRarityColorClass(newWorker.rarity);
+                setWorkMessage(`✅ Промокод активирован! Вы получили ${newWorker.rarity} Работника (${newWorker.income} ₽/сек)!`, colorClass);
+
+                // Очистка ввода
+                if (promoCodeInputElement) {
+                    promoCodeInputElement.value = '';
+                }
+
+                // Перерисовка представления для отображения нового работника
+                renderWorkView();
+            } else {
+                setWorkMessage('Ошибка: Неизвестная награда промокода.', 'text-red-400');
+            }
+        };
+
+
         // --- Case and Worker Logic ---
         
         /** Выбирает редкость на основе шансов */
@@ -383,7 +487,10 @@
                 `;
                 
                 // Добавляем работника в инвентарь и сохраняем
-                workerInventory.push(newWorker);
+                // Если работник был добавлен через промокод, он уже в инвентаре, просто сохраняем
+                if (!workerInventory.includes(newWorker)) {
+                     workerInventory.push(newWorker);
+                }
                 saveState();
 
                 // Обработчик закрытия модального окна
@@ -431,6 +538,37 @@
             workListElement.innerHTML = ''; // Очистка
             const now = Date.now();
             
+            // --- 0. Промокоды (НОВЫЙ РАЗДЕЛ) ---
+            const promoTitle = document.createElement('h3');
+            promoTitle.className = 'text-lg font-bold text-pink-400 mb-3 mt-0 border-b border-gray-700 pb-1';
+            promoTitle.textContent = 'Активация Промокода';
+            workListElement.appendChild(promoTitle);
+
+            const promoCard = document.createElement('div');
+            promoCard.className = 'bg-gray-700 p-4 rounded-lg shadow-md mb-3';
+            promoCard.innerHTML = `
+                <div class="flex flex-col space-y-2 sm:flex-row sm:space-y-0 sm:space-x-2">
+                    <input type="text" id="promo-code-input" placeholder="Введите промокод (например, MerryCristmas)"
+                        class="flex-1 p-2 rounded-lg bg-gray-900 text-white border border-gray-600 uppercase" />
+                    <button id="redeem-promo-btn" 
+                            class="px-4 py-2 text-sm rounded-lg font-semibold text-white transition bg-pink-600 hover:bg-pink-700 active:bg-pink-800">
+                        Активировать
+                    </button>
+                </div>
+                <div id="promo-code-message" class="hidden"></div>
+            `;
+            workListElement.appendChild(promoCard);
+            
+            // Установка ссылок на UI элементы и добавление обработчика
+            promoCodeInputElement = document.getElementById('promo-code-input');
+            promoCodeMessageElement = document.getElementById('promo-code-message');
+
+            document.getElementById('redeem-promo-btn').addEventListener('click', () => {
+                const code = promoCodeInputElement.value;
+                redeemPromoCode(code);
+            });
+
+
             // --- 1. Кейс "Jobers" ---
             const caseTitle = document.createElement('h3');
             caseTitle.className = 'text-lg font-bold text-yellow-400 mb-3 mt-4 border-b border-gray-700 pb-1';
@@ -471,7 +609,7 @@
             if (workerInventory.length === 0) {
                  const emptyMessage = document.createElement('p');
                  emptyMessage.className = 'text-center text-gray-500 p-4 bg-gray-700 rounded-lg';
-                 emptyMessage.textContent = 'Ваш инвентарь пуст. Откройте кейс "Jobers"!';
+                 emptyMessage.textContent = 'Ваш инвентарь пуст. Откройте кейс "Jobers" или активируйте промокод!';
                  workListElement.appendChild(emptyMessage);
             }
 
@@ -749,8 +887,9 @@
 
         /** Определяет множитель на основе прошедшего времени */
         const calculateMultiplier = (timeElapsedMs) => {
+            // Изменено: уменьшен коэффициент с 0.15 до 0.05 для замедления роста множителя
             const timeSeconds = timeElapsedMs / 1000.0;
-            return 1.0 + Math.pow(timeSeconds, 1.5) * 0.15;
+            return 1.0 + Math.pow(timeSeconds, 1.5) * 0.05; 
         };
 
         /** Основной игровой цикл */
@@ -767,6 +906,7 @@
 
             currentMultiplier = calculateMultiplier(timeElapsed);
 
+            // Визуальный множитель для анимации (чтобы ракета не улетела слишком далеко)
             const visualMultiplier = Math.min(currentMultiplier, 5.00); 
             const travelRange = visualMultiplier - 1.00; 
             const maxRange = 4.00; 
@@ -806,6 +946,7 @@
 
             setTimeout(() => {
                 const r = Math.random(); 
+                // Формула для определения точки краха (оставлена без изменений, чтобы сохранить распределение)
                 crashPoint = Math.max(1.01, 1 / (1 - r) * 0.07 + 1.0); 
                 crashPoint = Math.min(crashPoint, 100.0); 
 
