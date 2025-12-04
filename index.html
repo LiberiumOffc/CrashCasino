@@ -16,12 +16,13 @@
             wins: 0, 
             completed: {} 
         };
-        let usedPromoCodes = []; // НОВОЕ: Для отслеживания использованных промокодов
+        let usedPromoCodes = []; // Для отслеживания использованных промокодов
 
         const XP_PER_GAME = 1; // 1 XP за игру
         const STORAGE_KEY = 'crushGameDataV2'; // Новый ключ для localStorage
         const MAX_LEVEL = 50; 
         const MAX_ACTIVE_WORKERS = 2; // Ограничение на количество активных работников
+        const WORKER_SELL_MULTIPLIER = 20; // 20x дохода/сек для продажи (эквивалент 20% от 100х базовой стоимости)
         
         let betAmount = 10;
         let currentMultiplier = 1.00;
@@ -45,7 +46,7 @@
             }
         };
 
-        // Конфигурация Кейсов и Работников
+        // Конфигурация Кейсов и Работ
         const CASE_PRICE = 10000; // Цена открытия кейса
         const WORKER_TIERS = [
             // Шансы нормированы, чтобы в сумме было 100%
@@ -84,10 +85,17 @@
         let balanceElement, levelElement, xpElement, multiplierElement, betInputElement, playButton, gameArea, messageBox, rocketIcon, statusText;
         let gameTabButton, workTabButton, workListElement, caseOpeningModal;
         
-        // НОВЫЕ UI элементы для Промокодов (устанавливаются в renderWorkView)
+        // НОВЫЕ UI элементы для Промокодов/Работы
         let promoCodeInputElement;
         let promoCodeMessageElement;
 
+        // НОВЫЕ UI элементы для Продажи Работника
+        let workerActionModal, workerActionTitle, workerActionMessage, workerActionButton;
+        let currentWorkerActionId = null; // ID работника, который сейчас в модальном окне
+        
+        // НОВЫЙ UI элемент для Шансов Кейса
+        let rarityModal; 
+        
         // --- Utility Functions ---
 
         /** Сохраняет весь игровой стейт в localStorage */
@@ -101,7 +109,7 @@
                     jobCooldowns: jobCooldowns,
                     questProgress: questProgress,
                     lastWorkerId: lastWorkerId,
-                    usedPromoCodes: usedPromoCodes // НОВОЕ: Сохраняем использованные коды
+                    usedPromoCodes: usedPromoCodes 
                 };
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToStore));
             } catch (e) {
@@ -121,7 +129,7 @@
                     xp = data.xp || 0;
                     jobCooldowns = data.jobCooldowns || {}; 
                     questProgress = data.questProgress || { wins: 0, completed: {} };
-                    usedPromoCodes = data.usedPromoCodes || []; // НОВОЕ: Загружаем использованные коды
+                    usedPromoCodes = data.usedPromoCodes || []; 
                     if (!questProgress.completed) questProgress.completed = {};
 
                     // Загрузка инвентаря
@@ -160,7 +168,7 @@
             questProgress = { wins: 0, completed: {} };
             workerInventory = [];
             lastWorkerId = 0;
-            usedPromoCodes = []; // НОВОЕ: Инициализация
+            usedPromoCodes = []; 
             messageBox.textContent = "Новый пользователь. Начальный баланс 1000 ₽, Ур. 1.";
             messageBox.classList.remove('hidden');
             setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
@@ -406,6 +414,41 @@
 
         // --- Case and Worker Logic ---
         
+        /** Открывает модальное окно с шансами редкости */
+        const openRarityModal = () => {
+            const content = document.getElementById('rarity-result-content');
+            content.innerHTML = ''; // Очистка
+            
+            let htmlContent = `<p class="text-gray-400 mb-4 text-sm">Шанс выпадения работника из Кейса "Jobers":</p>`;
+            
+            htmlContent += WORKER_TIERS.map(tier => {
+                const colorClass = getRarityColorClass(tier.rarity);
+                // Форматируем диапазон дохода
+                const incomeRange = tier.range[0] === tier.range[1] 
+                    ? formatCurrency(tier.range[0])
+                    : `${formatCurrency(tier.range[0])} - ${formatCurrency(tier.range[1])}`;
+                    
+                return `
+                    <div class="flex justify-between items-center py-2 border-b border-gray-700 last:border-b-0">
+                        <p class="font-bold ${colorClass}">${tier.rarity}</p>
+                        <div class="text-right">
+                           <p class="text-lg font-extrabold ${colorClass}">${tier.chance}%</p>
+                           <p class="text-xs text-gray-500">${incomeRange}/сек</p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            content.innerHTML = htmlContent;
+            rarityModal.classList.remove('hidden');
+        };
+
+        /** Расчитывает цену продажи работника */
+        const calculateSellPrice = (income) => {
+            // Цена продажи = Доход в секунду * Коэффициент продажи
+            return Math.floor(income * WORKER_SELL_MULTIPLIER);
+        };
+        
         /** Выбирает редкость на основе шансов */
         const rollRarity = () => {
             const roll = Math.random() * 100; // 0.00 to 99.99
@@ -534,7 +577,42 @@
             _renderFullWorkView(); // Полная перерисовка при изменении инвентаря
         };
 
+        /** Продает работника и зачисляет средства на баланс */
+        const sellWorker = (workerId) => {
+            const index = workerInventory.findIndex(w => w.id === workerId);
+            if (index === -1) {
+                 messageBox.textContent = '❌ Ошибка: Работник не найден.';
+                 messageBox.classList.remove('hidden');
+                 setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
+                 return;
+            }
 
+            const worker = workerInventory[index];
+            const sellPrice = calculateSellPrice(worker.income);
+
+            if (worker.isActive) {
+                worker.isActive = false; // Автоматическая деактивация перед продажей
+            }
+
+            // Удаляем работника
+            workerInventory.splice(index, 1);
+            
+            // Зачисляем средства
+            balance += sellPrice;
+            saveState();
+
+            // Закрываем модальное окно
+            workerActionModal.classList.add('hidden');
+            currentWorkerActionId = null;
+
+            messageBox.textContent = `✅ Работник "${worker.name}" продан за ${formatCurrency(sellPrice)}.`;
+            messageBox.classList.remove('hidden');
+            setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
+            
+            _renderFullWorkView(); // Перерисовка инвентаря
+        };
+
+        
         /** Рендерит список работ и квестов (ПОЛНАЯ ПЕРЕРИСОВКА - вызывается при смене вкладки или изменении состояния) */
         const _renderFullWorkView = () => {
             if (!workListElement) return;
@@ -573,11 +651,20 @@
 
 
             // --- 1. Кейс "Jobers" ---
-            const caseTitle = document.createElement('h3');
-            caseTitle.className = 'text-lg font-bold text-yellow-400 mb-3 mt-4 border-b border-gray-700 pb-1';
-            caseTitle.textContent = 'Кейс "Jobers"';
-            workListElement.appendChild(caseTitle);
+            const caseHeader = document.createElement('div');
+            caseHeader.className = 'flex items-center justify-between mb-3 mt-4 border-b border-gray-700 pb-1';
+            caseHeader.innerHTML = `
+                <h3 class="text-lg font-bold text-yellow-400">Кейс "Jobers"</h3>
+                <button id="rarity-info-btn" class="text-yellow-500 hover:text-yellow-400 transition ml-2 p-1 rounded-full bg-gray-700">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path>
+                    </svg>
+                </button>
+            `;
+            workListElement.appendChild(caseHeader);
             
+            document.getElementById('rarity-info-btn').addEventListener('click', openRarityModal);
+
             const canAfford = balance >= CASE_PRICE;
             const buttonClass = canAfford 
                 ? 'bg-yellow-600 hover:bg-yellow-700 active:bg-yellow-800'
@@ -619,26 +706,34 @@
             workerInventory.forEach(worker => {
                 const colorClass = getRarityColorClass(worker.rarity);
                 const isActive = worker.isActive;
-                const buttonText = isActive ? 'Деактивировать' : 'Активировать';
-                const buttonClass = isActive 
+                const toggleText = isActive ? 'Деактивировать' : 'Активировать';
+                const toggleClass = isActive 
                     ? 'bg-red-600 hover:bg-red-700'
                     : 'bg-green-600 hover:bg-green-700';
+                
+                const sellPrice = calculateSellPrice(worker.income);
+                const sellText = `Продать (${formatCurrency(sellPrice)})`;
+                const sellClass = 'bg-yellow-600 hover:bg-yellow-700';
 
                 const workerCard = document.createElement('div');
-                workerCard.className = 'flex items-center justify-between bg-gray-700 p-4 rounded-lg shadow-md mb-3';
+                workerCard.className = 'flex items-center justify-between bg-gray-700 p-4 rounded-lg shadow-md mb-3 flex-wrap sm:flex-nowrap';
                 workerCard.innerHTML = `
-                    <div>
+                    <div class="w-full sm:w-2/3 mb-2 sm:mb-0">
                         <p class="text-lg font-bold ${colorClass}">${worker.name}</p>
                         <p class="text-xl font-bold text-white">${worker.income} ₽/сек</p>
                         <p class="text-xs text-gray-400 mt-1">
                             ${worker.lore}
                         </p>
                     </div>
-                    <div class="text-right">
-                        <p class="text-xs ${isActive ? 'text-green-400' : 'text-red-400'} mb-1">${isActive ? 'АКТИВЕН' : 'НЕ АКТИВЕН'}</p>
-                        <button class="worker-toggle-btn px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${buttonClass}"
+                    <div class="w-full sm:w-1/3 text-right flex flex-col space-y-2 sm:space-y-1">
+                        <p class="text-xs ${isActive ? 'text-green-400' : 'text-red-400'}">${isActive ? 'АКТИВЕН' : 'НЕ АКТИВЕН'}</p>
+                        <button class="worker-toggle-btn px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${toggleClass}"
                                 data-id="${worker.id}">
-                            ${buttonText}
+                            ${toggleText}
+                        </button>
+                        <button class="worker-sell-btn px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${sellClass}"
+                                data-id="${worker.id}" data-name="${worker.name}" data-price="${sellPrice}">
+                            ${sellText}
                         </button>
                     </div>
                 `;
@@ -649,6 +744,12 @@
             document.querySelectorAll('.worker-toggle-btn').forEach(button => {
                 button.removeEventListener('click', handleWorkerToggleClick);
                 button.addEventListener('click', handleWorkerToggleClick);
+            });
+            
+            // Attach sell listener
+            document.querySelectorAll('.worker-sell-btn').forEach(button => {
+                button.removeEventListener('click', handleSellWorkerClick);
+                button.addEventListener('click', handleSellWorkerClick);
             });
 
 
@@ -1127,12 +1228,47 @@
                 if (currentView === 'WORK') updateWorkViewTimers(); 
             }, 3000);
         };
-        
+
         /** Обработчик переключения активности работника */
         const handleWorkerToggleClick = (event) => {
              const workerId = event.target.dataset.id;
              toggleWorkerActive(workerId);
         };
+
+        /** Обработчик клика по кнопке "Продать" */
+        const handleSellWorkerClick = (event) => {
+            const workerId = event.target.dataset.id;
+            const workerName = event.target.dataset.name;
+            const sellPrice = parseInt(event.target.dataset.price);
+
+            currentWorkerActionId = workerId;
+
+            // Настройка модального окна
+            workerActionTitle.textContent = 'Подтверждение Продажи';
+            workerActionMessage.innerHTML = `
+                Вы действительно хотите продать работника 
+                <span class="font-extrabold text-yellow-400">"${workerName}"</span>?
+                <br>
+                Вы получите: 
+                <span class="text-2xl font-black text-yellow-400">${formatCurrency(sellPrice)}</span>.
+            `;
+            workerActionButton.textContent = 'Подтвердить Продажу';
+            workerActionButton.className = 'px-6 py-3 bg-yellow-600 text-white font-bold rounded-lg hover:bg-yellow-700 transition';
+            
+            // Открываем модальное окно
+            workerActionModal.classList.remove('hidden');
+        };
+        
+        /** Обработчик подтверждения действия (Продажа) */
+        const handleActionConfirm = () => {
+            if (currentWorkerActionId) {
+                // Поскольку в этом модальном окне у нас пока только одно действие (Продажа),
+                // мы вызываем sellWorker. В более сложном приложении здесь был бы switch/case.
+                sellWorker(currentWorkerActionId);
+            }
+        };
+
+
         
         // --- Quest Logic ---
 
@@ -1225,6 +1361,17 @@
             workTabButton = document.getElementById('work-tab');
             workListElement = document.getElementById('work-list');
             caseOpeningModal = document.getElementById('case-opening-modal');
+            
+            // Элементы модального окна действий с работником
+            workerActionModal = document.getElementById('worker-action-modal');
+            workerActionTitle = document.getElementById('worker-action-title');
+            workerActionMessage = document.getElementById('worker-action-message');
+            workerActionButton = document.getElementById('worker-action-button');
+            const workerActionCancelButton = document.getElementById('worker-action-cancel');
+            
+            // Элементы модального окна шансов
+            rarityModal = document.getElementById('rarity-modal');
+
 
             // Загружаем состояние и запускаем циклы
             loadState();
@@ -1236,6 +1383,19 @@
             gameTabButton.addEventListener('click', () => setView('GAME'));
             workTabButton.addEventListener('click', () => setView('WORK'));
             
+            // Настройка Event Listeners для модального окна действий
+            workerActionButton.addEventListener('click', handleActionConfirm);
+            workerActionCancelButton.addEventListener('click', () => {
+                workerActionModal.classList.add('hidden');
+                currentWorkerActionId = null;
+            });
+            
+            // Настройка Event Listener для модального окна шансов
+            document.getElementById('close-rarity-modal-btn').addEventListener('click', () => {
+                 rarityModal.classList.add('hidden');
+            });
+
+
             betInputElement.addEventListener('input', (e) => {
                 let value = parseFloat(e.target.value);
                 if (isNaN(value) || value < 1) {
@@ -1327,6 +1487,41 @@
             <div id="case-result-content">
                 <!-- Content generated by JS animation -->
             </div>
+        </div>
+    </div>
+    
+    <!-- Worker Action Modal (Продажа/Подтверждение) -->
+    <div id="worker-action-modal" class="hidden fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-8 rounded-xl max-w-sm w-full text-center shadow-2xl border border-yellow-600">
+            <h2 id="worker-action-title" class="text-3xl font-extrabold text-white mb-4">
+                <!-- Title generated by JS -->
+            </h2>
+            <p id="worker-action-message" class="text-lg text-gray-300 mb-6">
+                <!-- Message generated by JS -->
+            </p>
+            <div class="flex justify-center space-x-4">
+                <button id="worker-action-cancel" class="px-6 py-3 bg-gray-600 text-white font-bold rounded-lg hover:bg-gray-700 transition">
+                    Отмена
+                </button>
+                <button id="worker-action-button" class="px-6 py-3 bg-yellow-600 text-white font-bold rounded-lg hover:bg-yellow-700 transition">
+                    <!-- Text generated by JS -->
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Rarity Chances Modal (НОВОЕ МОДАЛЬНОЕ ОКНО) -->
+    <div id="rarity-modal" class="hidden fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-8 rounded-xl max-w-sm w-full shadow-2xl border border-yellow-600">
+            <h2 class="text-3xl font-extrabold text-white mb-4 text-center">
+                📊 Шансы Выпадения Работников
+            </h2>
+            <div id="rarity-result-content" class="mb-6 space-y-2">
+                <!-- Content generated by openRarityModal -->
+            </div>
+            <button id="close-rarity-modal-btn" class="w-full px-6 py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition">
+                Закрыть
+            </button>
         </div>
     </div>
 
