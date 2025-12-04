@@ -10,16 +10,17 @@
         let balance = 1000; // Начальный баланс (₽)
         let level = 1;
         let xp = 0;
-        let passiveWorkersData = {}; // { Misha: { owned: true, lastIncomeTime: number } }
+        let workerInventory = []; // [{ id: string, name: string, rarity: string, income: number, isActive: boolean, lastIncomeTime: number, lore: string }]
         let jobCooldowns = {}; // { level: timestamp }
         let questProgress = {
-            wins: 0, // Общее количество успешных кэшаутов (для старых квестов)
-            completed: {} // { questId: true }
+            wins: 0, 
+            completed: {} 
         };
 
         const XP_PER_GAME = 1; // 1 XP за игру
-        const STORAGE_KEY = 'crushGameData'; // Ключ для localStorage
-        const MAX_LEVEL = 50; // Максимальный уровень
+        const STORAGE_KEY = 'crushGameDataV2'; // Новый ключ для localStorage
+        const MAX_LEVEL = 50; 
+        const MAX_ACTIVE_WORKERS = 2; // Ограничение на количество активных работников
         
         let betAmount = 10;
         let currentMultiplier = 1.00;
@@ -30,36 +31,41 @@
         let isGameStarting = false;
         
         let currentView = 'GAME'; // 'GAME' or 'WORK'
-
+        let isCaseOpening = false;
+        let lastWorkerId = 0; // Для генерации уникальных ID работников
+        
         // --- Configuration ---
 
-        // Конфигурация ручных работ
+        // Конфигурация Кейсов и Работников
+        const CASE_PRICE = 10000; // Цена открытия кейса
+        const WORKER_TIERS = [
+            // Шансы нормированы, чтобы в сумме было 100%
+            { rarity: 'Super Refrage', color: 'text-fuchsia-400', range: [5000, 20000], chance: 0.1, lore: 'Фантастическая редкость. Это не работник, это корпорация.' },
+            { rarity: 'Legendary', color: 'text-orange-400', range: [120, 220], chance: 4.9, lore: 'Сверхъестественный талант, приносит огромную прибыль.' },
+            { rarity: 'Mythical', color: 'text-purple-400', range: [80, 120], chance: 16.0, lore: 'Практически не встречается, но его навыки бесценны.' },
+            { rarity: 'Epic', color: 'text-red-400', range: [50, 80], chance: 29.0, lore: 'Высококлассный специалист, быстро масштабирует доход.' },
+            { rarity: 'Rare', color: 'text-blue-400', range: [20, 50], chance: 25.0, lore: 'Опытный работник с сильным стремлением к успеху.' },
+            { rarity: 'Uncommon', color: 'text-green-400', range: [10, 20], chance: 15.0, lore: 'Надёжный, трудолюбивый, приносит стабильный доход.' },
+            { rarity: 'Common', color: 'text-gray-400', range: [5, 10], chance: 10.0, lore: 'Базовый работник, с него начинается любая империя.' }
+        ].sort((a, b) => b.chance - a.chance); // Сортируем по редкости (от наименьшего шанса)
+
+
+        // Конфигурация ручных работ (Остаются без изменений)
         const MANUAL_JOBS = [
-            { level: 1, name: 'Шуллер', salary: 120, xpReward: 2, cooldown: 59000, description: 'Быстрый, но маленький доход. Ур. 1+' }, // 59 seconds, 2 XP
-            { level: 5, name: 'Шахтёр', salary: 400, xpReward: 4, cooldown: 120000, description: 'Тяжелый труд, хорошая зарплата. Ур. 5+' }, // 2 minutes, 4 XP
-            // Обновленная работа Ур. 10
-            { level: 10, name: 'Специалист', salary: 5000, xpReward: 8, cooldown: 180000, description: 'Освоенные навыки, приносящие большой доход. Ур. 10+' }, // 3 minutes, 8 XP
-            // Новая работа Ур. 15
-            { level: 15, name: 'Инженер', salary: 6800, xpReward: 12, cooldown: 300000, description: 'Высококвалифицированная работа. Ур. 15+' } // 5 minutes, 12 XP
+            { level: 1, name: 'Шуллер', salary: 120, xpReward: 2, cooldown: 59000, description: 'Быстрый, но маленький доход. Ур. 1+' }, 
+            { level: 5, name: 'Шахтёр', salary: 400, xpReward: 4, cooldown: 120000, description: 'Тяжелый труд, хорошая зарплата. Ур. 5+' }, 
+            { level: 10, name: 'Специалист', salary: 5000, xpReward: 8, cooldown: 180000, description: 'Освоенные навыки, приносящие большой доход. Ур. 10+' }, 
+            { level: 15, name: 'Инженер', salary: 6800, xpReward: 12, cooldown: 300000, description: 'Высококвалифицированная работа. Ур. 15+' } 
         ];
         
-        // Конфигурация пассивных работников (ВКЛЮЧАЯ ВАНЮ)
-        const PASSIVE_WORKERS = [
-            { id: 'Misha', name: 'Миша', incomePerSecond: 2, price: 3500, description: 'Надежный источник. 2 ₽/сек' },
-            { id: 'Vanya', name: 'Ваня', incomePerSecond: 59, price: 12000, description: 'Крупный инвестор. 59 ₽/сек' }
-        ];
-
-        // Конфигурация квестов (Задания)
+        // Конфигурация квестов 
         const QUESTS = [
-            // Квесты, основанные на достижении Уровня
             { id: 1, name: 'Новичок', type: 'level', requirement: 2, reward: 500, xpReward: 12, unlockLevel: 1, description: 'Достигните Уровня 2.' },
             { id: 2, name: 'Первый Рывок', type: 'level', requirement: 4, reward: 1500, xpReward: 12, unlockLevel: 2, description: 'Достигните Уровня 4.' },
             { id: 3, name: 'В Середину', type: 'level', requirement: 7, reward: 4500, xpReward: 12, unlockLevel: 5, description: 'Достигните Уровня 7.' },
             { id: 4, name: 'Промежуточный', type: 'level', requirement: 12, reward: 3500, xpReward: 12, unlockLevel: 9, description: 'Достигните Уровня 12.' },
             { id: 5, name: 'На Подходе', type: 'level', requirement: 16, reward: 5700, xpReward: 12, unlockLevel: 13, description: 'Достигните Уровня 16.' },
             { id: 6, name: 'Финишная Прямая', type: 'level', requirement: 20, reward: 6600, xpReward: 24, unlockLevel: 15, description: 'Достигните Уровня 20.' },
-            
-            // Квесты, основанные на победах в краш-игре (Открываются на Уровне 20)
             { id: 101, name: 'Первая Ступень', type: 'wins', requirement: 20, reward: 13800, xpReward: 0, unlockLevel: 20, description: 'Выиграть в краш-игре 20 раз.' },
             { id: 102, name: 'Опытный Игрок', type: 'wins', requirement: 45, reward: 49000, xpReward: 0, unlockLevel: 20, description: 'Выиграть в краш-игре 45 раз.' }
         ];
@@ -67,7 +73,7 @@
 
         // UI Elements
         let balanceElement, levelElement, xpElement, multiplierElement, betInputElement, playButton, gameArea, messageBox, rocketIcon, statusText;
-        let gameTabButton, workTabButton, workListElement;
+        let gameTabButton, workTabButton, workListElement, caseOpeningModal;
 
         // --- Utility Functions ---
 
@@ -78,9 +84,10 @@
                     balance: balance,
                     level: level,
                     xp: xp,
-                    passiveWorkersData: passiveWorkersData,
+                    workerInventory: workerInventory, // Используем новый инвентарь
                     jobCooldowns: jobCooldowns,
-                    questProgress: questProgress
+                    questProgress: questProgress,
+                    lastWorkerId: lastWorkerId
                 };
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToStore));
             } catch (e) {
@@ -95,51 +102,60 @@
                 const storedData = localStorage.getItem(STORAGE_KEY);
                 if (storedData) {
                     const data = JSON.parse(storedData);
-                    balance = data.balance || 1000;
+                    balance = data.balance || 10000;
                     level = data.level || 1;
                     xp = data.xp || 0;
-                    passiveWorkersData = data.passiveWorkersData || {};
                     jobCooldowns = data.jobCooldowns || {}; 
                     questProgress = data.questProgress || { wins: 0, completed: {} };
                     if (!questProgress.completed) questProgress.completed = {};
+
+                    // Загрузка инвентаря
+                    workerInventory = data.workerInventory || [];
+                    lastWorkerId = data.lastWorkerId || 0;
                     
+                    // Убеждаемся, что все работники имеют lastIncomeTime
+                    workerInventory.forEach(w => {
+                        if (w.isActive && w.lastIncomeTime === undefined) {
+                            w.lastIncomeTime = Date.now();
+                        }
+                    });
+
                     // Автоматическое пополнение баланса для тестирования
                     if (balance < 10) {
-                        balance = 1000;
-                        messageBox.textContent = "Баланс автоматически восстановлен до 1000 ₽.";
+                        balance = 10000;
+                        messageBox.textContent = "Баланс автоматически восстановлен до 10000 ₽.";
                         messageBox.classList.remove('hidden');
                         setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
-                        saveState(); // Сохраняем восстановленный баланс
+                        saveState(); 
                     }
                     
-                    // Обрабатываем доход, накопленный в офлайне
                     processOfflineIncome();
                     
-                    return true; // Состояние загружено
+                    return true; 
                 }
             } catch (e) {
                 console.error("Ошибка загрузки состояния из localStorage:", e);
             }
             
             // Инициализация, если данных нет
-            balance = 1000;
+            balance = 10000;
             level = 1;
             xp = 0;
-            passiveWorkersData = {};
             jobCooldowns = {};
             questProgress = { wins: 0, completed: {} };
-            messageBox.textContent = "Новый пользователь. Начальный баланс 1000 ₽, Ур. 1.";
+            workerInventory = [];
+            lastWorkerId = 0;
+            messageBox.textContent = "Новый пользователь. Начальный баланс 10000 ₽, Ур. 1.";
             messageBox.classList.remove('hidden');
             setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
-            return false; // Начальное состояние
+            return false; 
         };
 
         /** Вычисляет необходимый XP для следующего уровня. */
         const getRequiredXP = (currentLevel) => {
             if (currentLevel >= MAX_LEVEL) {
-                return Infinity; // XP не требуется для перехода на следующий уровень
+                return Infinity; 
             }
-            // Формула: 20 + (текущий_уровень - 1) * 5
             return 20 + (currentLevel - 1) * 5; 
         };
 
@@ -161,14 +177,19 @@
             const seconds = totalSeconds % 60;
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
         };
+
+        /** Находит класс цвета Tailwind для редкости */
+        const getRarityColorClass = (rarity) => {
+            const tier = WORKER_TIERS.find(t => t.rarity === rarity);
+            return tier ? tier.color : 'text-gray-400';
+        };
         
         /** Проверяет XP и повышает уровень при необходимости */
         const checkLevelUp = () => {
             let changed = false;
             
-            // Проверка на максимальный уровень
             if (level >= MAX_LEVEL) {
-                xp = 0; // Сбрасываем XP, если уровень максимальный
+                xp = 0; 
                 return false;
             }
 
@@ -179,11 +200,9 @@
                 xp -= requiredXP;
                 changed = true;
                 
-                
-                // Если достигнут MAX_LEVEL
                 if (level === MAX_LEVEL) {
                     messageBox.textContent = `⭐ ДОСТИГНУТ МАКСИМАЛЬНЫЙ УРОВЕНЬ (${MAX_LEVEL})! ⭐`;
-                    xp = 0; // Устанавливаем XP в 0
+                    xp = 0; 
                 } else {
                     messageBox.textContent = `💥 ПОЗДРАВЛЯЕМ! Вы достигли УРОВНЯ ${level}!`;
                 }
@@ -192,7 +211,6 @@
                 setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
 
                 if (level < MAX_LEVEL && xp >= getRequiredXP(level)) {
-                     // Рекурсивный вызов, если XP хватает на еще один уровень
                      return checkLevelUp(); 
                 }
             }
@@ -200,28 +218,24 @@
         };
 
 
-        /** Обрабатывает доход, накопленный, пока игрок был в офлайне */
+        /** Обрабатывает доход, накопленный в офлайне */
         const processOfflineIncome = () => {
             let totalIncome = 0;
             const now = Date.now();
-            let passiveWorkersUpdates = {};
             let shouldUpdate = false;
             
-            PASSIVE_WORKERS.forEach(worker => {
-                const workerData = passiveWorkersData[worker.id];
-                if (workerData && workerData.owned && workerData.lastIncomeTime) {
-                    const timeElapsedMs = now - workerData.lastIncomeTime;
+            workerInventory.forEach(worker => {
+                if (worker.isActive && worker.lastIncomeTime) {
+                    const timeElapsedMs = now - worker.lastIncomeTime;
                     
                     if (timeElapsedMs >= 1000) {
                         const timeElapsedSeconds = Math.floor(timeElapsedMs / 1000);
-                        const earned = timeElapsedSeconds * worker.incomePerSecond;
+                        const earned = timeElapsedSeconds * worker.income;
                         
                         totalIncome += earned;
                         
-                        passiveWorkersUpdates[worker.id] = { 
-                            ...workerData, 
-                            lastIncomeTime: workerData.lastIncomeTime + (timeElapsedSeconds * 1000)
-                        };
+                        // Обновляем время последнего дохода работника
+                        worker.lastIncomeTime = worker.lastIncomeTime + (timeElapsedSeconds * 1000);
                         shouldUpdate = true;
                     }
                 }
@@ -229,22 +243,12 @@
 
             if (totalIncome > 0) {
                 balance += totalIncome;
-                
-                // Обновляем passiveWorkersData локально
-                for (const id in passiveWorkersUpdates) {
-                    passiveWorkersData[id] = passiveWorkersUpdates[id];
-                }
-
                 saveState();
                 
-                messageBox.textContent = `🚀 За время вашего отсутствия работники заработали ${formatCurrency(totalIncome)}!`;
+                messageBox.textContent = `🚀 За время вашего отсутствия активные работники заработали ${formatCurrency(totalIncome)}!`;
                 messageBox.classList.remove('hidden');
                 setTimeout(() => { messageBox.classList.add('hidden'); }, 4000);
             } else if (shouldUpdate) {
-                // Если нет дохода, но время нужно обновить
-                 for (const id in passiveWorkersUpdates) {
-                    passiveWorkersData[id] = passiveWorkersUpdates[id];
-                }
                 saveState();
             }
         };
@@ -253,28 +257,23 @@
         const applyLivePassiveIncome = () => {
              let totalIncome = 0;
              const now = Date.now();
-             let passiveWorkersUpdates = {};
              let shouldUpdate = false;
 
-             PASSIVE_WORKERS.forEach(worker => {
-                 const workerData = passiveWorkersData[worker.id];
-                 if (workerData && workerData.owned) {
+             workerInventory.forEach(worker => {
+                 if (worker.isActive) {
                      // Убедимся, что lastIncomeTime установлен
-                     if (!workerData.lastIncomeTime) {
-                         passiveWorkersUpdates[worker.id] = { ...workerData, lastIncomeTime: now };
+                     if (!worker.lastIncomeTime) {
+                         worker.lastIncomeTime = now;
                          shouldUpdate = true;
                      } else {
-                         const timeElapsedMs = now - workerData.lastIncomeTime;
+                         const timeElapsedMs = now - worker.lastIncomeTime;
                          if (timeElapsedMs >= 1000) {
                             const timeElapsedSeconds = Math.floor(timeElapsedMs / 1000);
-                            const earned = timeElapsedSeconds * worker.incomePerSecond;
+                            const earned = timeElapsedSeconds * worker.income;
                             
                             totalIncome += earned;
 
-                            passiveWorkersUpdates[worker.id] = { 
-                                ...workerData, 
-                                lastIncomeTime: workerData.lastIncomeTime + (timeElapsedSeconds * 1000)
-                            };
+                            worker.lastIncomeTime = worker.lastIncomeTime + (timeElapsedSeconds * 1000);
                             shouldUpdate = true;
                          }
                      }
@@ -283,18 +282,8 @@
 
              if (totalIncome > 0) {
                  balance += totalIncome;
-                 
-                 // Обновляем passiveWorkersData локально
-                 for (const id in passiveWorkersUpdates) {
-                     passiveWorkersData[id] = passiveWorkersUpdates[id];
-                 }
-                 
                  saveState();
              } else if (shouldUpdate) {
-                  // Обновляем только время
-                  for (const id in passiveWorkersUpdates) {
-                      passiveWorkersData[id] = passiveWorkersUpdates[id];
-                  }
                   saveState();
              }
         };
@@ -302,6 +291,136 @@
         /** Запускает цикл пассивного дохода */
         const startPassiveIncomeLoop = () => {
              setInterval(applyLivePassiveIncome, 1000);
+        };
+        
+        // --- Case and Worker Logic ---
+        
+        /** Выбирает редкость на основе шансов */
+        const rollRarity = () => {
+            const roll = Math.random() * 100; // 0.00 to 99.99
+            let cumulativeChance = 0;
+
+            for (const tier of WORKER_TIERS) {
+                cumulativeChance += tier.chance;
+                if (roll < cumulativeChance) {
+                    return tier;
+                }
+            }
+            // Fallback (should not happen if chances total 100)
+            return WORKER_TIERS[WORKER_TIERS.length - 1]; // Common
+        };
+
+        /** Открывает кейс "Jobers" */
+        const openJobersCase = () => {
+            if (isCaseOpening) return;
+            
+            if (balance < CASE_PRICE) {
+                messageBox.textContent = `Недостаточно средств. Для открытия кейса нужно ${formatCurrency(CASE_PRICE)}.`;
+                messageBox.classList.remove('hidden');
+                setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
+                return;
+            }
+            
+            // 1. Вычитаем цену
+            balance -= CASE_PRICE;
+            isCaseOpening = true;
+            updateUI(); // Обновляем баланс и блокируем кнопку
+
+            // 2. Ролл редкости
+            const rolledTier = rollRarity();
+            
+            // 3. Генерация дохода
+            const minIncome = rolledTier.range[0];
+            const maxIncome = rolledTier.range[1];
+            const generatedIncome = Math.floor(Math.random() * (maxIncome - minIncome + 1)) + minIncome;
+
+            // 4. Создание работника
+            lastWorkerId++;
+            const newWorker = {
+                id: `worker-${lastWorkerId}`,
+                name: `${rolledTier.rarity} Работник #${lastWorkerId}`,
+                rarity: rolledTier.rarity,
+                income: generatedIncome,
+                isActive: false, // Изначально не активен
+                lastIncomeTime: 0,
+                lore: rolledTier.lore
+            };
+            
+            // 5. Запуск анимации
+            animateCaseOpening(newWorker);
+        };
+
+        /** Анимация открытия кейса */
+        const animateCaseOpening = (newWorker) => {
+            const modal = caseOpeningModal;
+            const content = document.getElementById('case-result-content');
+            
+            // Сброс и показ модального окна
+            content.innerHTML = `<p class="text-2xl text-white animate-pulse">*** Открытие Кейса ***</p>`;
+            modal.classList.remove('hidden');
+            
+            // Шаг 1: Задержка (вращение)
+            setTimeout(() => {
+                content.innerHTML = `<p class="text-xl text-gray-400 mb-4">Розыгрыш редкости...</p>`;
+            }, 1000);
+
+            // Шаг 2: Вывод результата
+            setTimeout(() => {
+                const colorClass = getRarityColorClass(newWorker.rarity);
+                
+                content.innerHTML = `
+                    <div class="animate-bounce-in p-6 rounded-lg shadow-2xl bg-gray-900 border-4 border-current ${colorClass.replace('text-', 'border-')}">
+                        <p class="text-2xl font-extrabold ${colorClass}">
+                            ${newWorker.rarity.toUpperCase()}!
+                        </p>
+                        <p class="text-xl text-white mt-2">${newWorker.name}</p>
+                        <p class="text-4xl font-black ${colorClass} mt-4">${newWorker.income} ₽/сек</p>
+                        <p class="text-sm text-gray-400 mt-2">${newWorker.lore}</p>
+                    </div>
+                    <button id="close-case-btn" class="mt-6 px-6 py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition">
+                        Добавить в Инвентарь
+                    </button>
+                `;
+                
+                // Добавляем работника в инвентарь и сохраняем
+                workerInventory.push(newWorker);
+                saveState();
+
+                // Обработчик закрытия модального окна
+                document.getElementById('close-case-btn').addEventListener('click', () => {
+                    modal.classList.add('hidden');
+                    isCaseOpening = false;
+                    setView('WORK'); // Переходим в режим работы, чтобы увидеть инвентарь
+                });
+                
+            }, 2500); 
+        };
+        
+        /** Активирует/деактивирует работника */
+        const toggleWorkerActive = (workerId) => {
+            const worker = workerInventory.find(w => w.id === workerId);
+            if (!worker) return;
+            
+            const currentlyActive = workerInventory.filter(w => w.isActive).length;
+
+            if (worker.isActive) {
+                // Деактивация
+                worker.isActive = false;
+                worker.lastIncomeTime = 0; // Сбрасываем время
+            } else {
+                // Активация
+                if (currentlyActive >= MAX_ACTIVE_WORKERS) {
+                    messageBox.textContent = `❌ Достигнут лимит активных работников (${MAX_ACTIVE_WORKERS}). Деактивируйте одного.`;
+                    messageBox.classList.remove('hidden');
+                    setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
+                    return;
+                }
+                worker.isActive = true;
+                worker.lastIncomeTime = Date.now();
+            }
+
+            saveState();
+            renderWorkView();
         };
 
 
@@ -312,40 +431,72 @@
             workListElement.innerHTML = ''; // Очистка
             const now = Date.now();
             
-            // --- 1. Пассивные Работники ---
-            const passiveTitle = document.createElement('h3');
-            passiveTitle.className = 'text-lg font-bold text-indigo-400 mb-3 mt-4 border-b border-gray-700 pb-1';
-            passiveTitle.textContent = 'Пассивные Работники (Купить 1 раз)';
-            workListElement.appendChild(passiveTitle);
+            // --- 1. Кейс "Jobers" ---
+            const caseTitle = document.createElement('h3');
+            caseTitle.className = 'text-lg font-bold text-yellow-400 mb-3 mt-4 border-b border-gray-700 pb-1';
+            caseTitle.textContent = 'Кейс "Jobers"';
+            workListElement.appendChild(caseTitle);
+            
+            const canAfford = balance >= CASE_PRICE;
+            const buttonClass = canAfford 
+                ? 'bg-yellow-600 hover:bg-yellow-700 active:bg-yellow-800'
+                : 'bg-red-900 text-red-300 cursor-not-allowed';
 
-            PASSIVE_WORKERS.forEach(worker => {
-                const workerData = passiveWorkersData[worker.id] || { owned: false };
-                const isOwned = workerData.owned;
-                const canAfford = balance >= worker.price;
-                const isDisabled = isOwned || !canAfford;
+            const caseCard = document.createElement('div');
+            caseCard.className = 'flex items-center justify-between bg-gray-700 p-4 rounded-lg shadow-md mb-3';
+            caseCard.innerHTML = `
+                <div>
+                    <p class="text-lg font-bold text-white">Открыть "Jobers"</p>
+                    <p class="text-sm text-gray-400">Получите случайного работника.</p>
+                </div>
+                <div class="text-right">
+                    <button id="case-btn" 
+                            class="px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${buttonClass}"
+                            ${canAfford && !isCaseOpening ? '' : 'disabled'}>
+                        Открыть (${formatCurrency(CASE_PRICE)})
+                    </button>
+                </div>
+            `;
+            workListElement.appendChild(caseCard);
+            
+            document.getElementById('case-btn').addEventListener('click', openJobersCase);
 
-                const buttonText = isOwned 
-                    ? `Работает: ${worker.incomePerSecond} ₽/сек` 
-                    : `Купить (${formatCurrency(worker.price)})`;
+            // --- 2. Инвентарь Работников ---
+            const activeWorkersCount = workerInventory.filter(w => w.isActive).length;
+            const inventoryTitle = document.createElement('h3');
+            inventoryTitle.className = 'text-lg font-bold text-indigo-400 mb-3 mt-6 border-b border-gray-700 pb-1';
+            inventoryTitle.innerHTML = `Инвентарь Работников <span class="text-sm text-yellow-400">(${activeWorkersCount}/${MAX_ACTIVE_WORKERS} активно)</span>`;
+            workListElement.appendChild(inventoryTitle);
+            
+            if (workerInventory.length === 0) {
+                 const emptyMessage = document.createElement('p');
+                 emptyMessage.className = 'text-center text-gray-500 p-4 bg-gray-700 rounded-lg';
+                 emptyMessage.textContent = 'Ваш инвентарь пуст. Откройте кейс "Jobers"!';
+                 workListElement.appendChild(emptyMessage);
+            }
 
-                const buttonClass = isOwned 
-                    ? 'bg-green-700 text-white cursor-default'
-                    : (isDisabled 
-                        ? 'bg-red-900 text-red-300 cursor-not-allowed'
-                        : 'bg-yellow-600 hover:bg-yellow-700 active:bg-yellow-800');
+            workerInventory.forEach(worker => {
+                const colorClass = getRarityColorClass(worker.rarity);
+                const isActive = worker.isActive;
+                const buttonText = isActive ? 'Деактивировать' : 'Активировать';
+                const buttonClass = isActive 
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-green-600 hover:bg-green-700';
 
                 const workerCard = document.createElement('div');
                 workerCard.className = 'flex items-center justify-between bg-gray-700 p-4 rounded-lg shadow-md mb-3';
                 workerCard.innerHTML = `
                     <div>
-                        <p class="text-lg font-bold text-white">${worker.name}</p>
-                        <p class="text-sm text-gray-400">${worker.description}</p>
+                        <p class="text-lg font-bold ${colorClass}">${worker.name}</p>
+                        <p class="text-xl font-bold text-white">${worker.income} ₽/сек</p>
+                        <p class="text-xs text-gray-400 mt-1">
+                            ${worker.lore}
+                        </p>
                     </div>
                     <div class="text-right">
-                        <button id="worker-btn-${worker.id}" 
-                                class="worker-button px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${buttonClass}"
-                                data-id="${worker.id}"
-                                ${isDisabled ? 'disabled' : ''}>
+                        <p class="text-xs ${isActive ? 'text-green-400' : 'text-red-400'} mb-1">${isActive ? 'АКТИВЕН' : 'НЕ АКТИВЕН'}</p>
+                        <button class="worker-toggle-btn px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${buttonClass}"
+                                data-id="${worker.id}">
                             ${buttonText}
                         </button>
                     </div>
@@ -353,17 +504,14 @@
                 workListElement.appendChild(workerCard);
             });
             
-            // Attach purchase listener
-            document.querySelectorAll('.worker-button').forEach(button => {
-                // Удаляем старый слушатель, если он был
-                button.removeEventListener('click', handleWorkerPurchase);
-                if (!button.disabled && button.dataset.id) {
-                    button.addEventListener('click', handleWorkerPurchase);
-                }
+            // Attach toggle listener
+            document.querySelectorAll('.worker-toggle-btn').forEach(button => {
+                button.removeEventListener('click', handleWorkerToggleClick);
+                button.addEventListener('click', handleWorkerToggleClick);
             });
 
 
-            // --- 2. Ручные Работы (Кулдаун) ---
+            // --- 3. Ручные Работы (Кулдаун) ---
             const manualTitle = document.createElement('h3');
             manualTitle.className = 'text-lg font-bold text-indigo-400 mb-3 mt-6 border-b border-gray-700 pb-1';
             manualTitle.textContent = 'Ручные Работы (Кулдаун)';
@@ -418,7 +566,7 @@
                 }
             });
             
-            // --- 3. Квесты ---
+            // --- 4. Квесты ---
             const questTitle = document.createElement('h3');
             questTitle.className = 'text-lg font-bold text-indigo-400 mb-3 mt-6 border-b border-gray-700 pb-1';
             questTitle.textContent = 'Квесты (Задания)';
@@ -432,14 +580,13 @@
                 let isReadyToClaim;
                 let progressText;
                 
-                // --- Определение прогресса в зависимости от типа квеста ---
                 if (quest.type === 'level') {
                     currentProgress = level;
                     isReadyToClaim = currentProgress >= quest.requirement && !isCompleted;
                     progressText = isCompleted 
                         ? 'Завершено' 
                         : `Ур. ${currentProgress} / Ур. ${quest.requirement}`;
-                } else { // 'wins' type (победы в краш-игре)
+                } else { 
                     currentProgress = questProgress.wins;
                     isReadyToClaim = currentProgress >= quest.requirement && !isCompleted;
                     progressText = isCompleted 
@@ -447,7 +594,6 @@
                         : `${currentProgress} / ${quest.requirement} побед`;
                 }
 
-                // Проверка на доступность по уровню
                 const isLocked = level < quest.unlockLevel;
 
                 const isDisabled = isLocked || isCompleted || !isReadyToClaim;
@@ -529,17 +675,14 @@
             const xpBar = document.getElementById('xp-progress-bar');
             
             if (level >= MAX_LEVEL) {
-                // Если достигнут максимальный уровень
                 levelElement.textContent = `${MAX_LEVEL} (MAX)`;
                 xpElement.textContent = 'MAX';
                 xpBar.style.width = `100%`;
             } else {
-                // Обычное отображение уровня и XP
                 levelElement.textContent = level;
                 const xpRequired = getRequiredXP(level);
                 xpElement.textContent = `${xp} / ${xpRequired} XP`;
                 
-                // Обновление полосы XP
                 const progress = (xp / xpRequired) * 100;
                 xpBar.style.width = `${Math.min(100, progress)}%`;
             }
@@ -584,7 +727,7 @@
                     playButton.textContent = 'ИГРАТЬ';
                     playButton.classList.remove('bg-red-600', 'hover:bg-red-700');
                     playButton.classList.add('bg-green-600', 'hover:bg-green-700');
-                    playButton.disabled = isGameStarting || (betAmount > balance || betAmount <= 0);
+                    playButton.disabled = isGameStarting || (betAmount > balance || betAmount <= 0) || isCaseOpening;
                 }
 
                 if (gameState === 'CASHED_OUT') {
@@ -607,7 +750,6 @@
         /** Определяет множитель на основе прошедшего времени */
         const calculateMultiplier = (timeElapsedMs) => {
             const timeSeconds = timeElapsedMs / 1000.0;
-            // Простая кривая роста: 1.0 + (время ^ 1.5) * 0.15
             return 1.0 + Math.pow(timeSeconds, 1.5) * 0.15;
         };
 
@@ -625,7 +767,6 @@
 
             currentMultiplier = calculateMultiplier(timeElapsed);
 
-            // Анимация ракеты (визуальный эффект)
             const visualMultiplier = Math.min(currentMultiplier, 5.00); 
             const travelRange = visualMultiplier - 1.00; 
             const maxRange = 4.00; 
@@ -634,7 +775,6 @@
             
             rocketIcon.style.transform = `translateY(${Math.min(0, -percentageUp)}%)`;
 
-            // Проверка на крах
             if (currentMultiplier >= crashPoint) {
                 endGame('CRASHED');
                 return;
@@ -665,14 +805,12 @@
             rocketIcon.style.opacity = 1; 
 
             setTimeout(() => {
-                // Генерация точки краха (чем меньше r, тем выше точка краха)
                 const r = Math.random(); 
                 crashPoint = Math.max(1.01, 1 / (1 - r) * 0.07 + 1.0); 
-                crashPoint = Math.min(crashPoint, 100.0); // Ограничиваем максимальным значением
+                crashPoint = Math.min(crashPoint, 100.0); 
 
-                // Вычитаем ставку
                 balance -= bet;
-                saveState(); // Сохраняем новый баланс
+                saveState(); 
 
                 betAmount = bet;
                 currentMultiplier = 1.00;
@@ -692,7 +830,6 @@
                 animationFrameId = null;
             }
             
-            // 1. Начисляем XP и проверяем уровень
             if (level < MAX_LEVEL) {
                  xp += XP_PER_GAME;
             }
@@ -700,9 +837,8 @@
             
             if (reason === 'CASHED_OUT') {
                 const winnings = betAmount * currentMultiplier;
-                balance += winnings; // Добавляем выигрыш
+                balance += winnings; 
                 
-                // Обновляем прогресс квестов на победы
                 questProgress.wins += 1;
 
                 gameState = 'CASHED_OUT';
@@ -715,11 +851,10 @@
                 }, 500);
             }
 
-            saveState(); // Сохраняем все обновленные данные
+            saveState(); 
 
             updateUI();
             
-            // Сброс состояния через 3 секунды
             setTimeout(() => {
                 currentMultiplier = 1.00;
                 gameState = 'IDLE';
@@ -757,14 +892,13 @@
                  return;
             }
             
-            // Начисляем зарплату и XP
             balance += job.salary;
-            if (level < MAX_LEVEL) { // XP только до MAX_LEVEL
+            if (level < MAX_LEVEL) { 
                 xp += job.xpReward; 
             }
             checkLevelUp();
             
-            jobCooldowns[levelId] = now; // Устанавливаем новый кулдоун
+            jobCooldowns[levelId] = now; 
 
             saveState(); 
 
@@ -773,41 +907,14 @@
             
             setTimeout(() => {
                 messageBox.classList.add('hidden');
+                if (currentView === 'WORK') renderWorkView(); // Обновляем кулдоун в UI
             }, 3000);
         };
         
-        /** Обработчик покупки пассивного работника */
-        const handleWorkerPurchase = (event) => {
-            const workerId = event.target.dataset.id;
-            const worker = PASSIVE_WORKERS.find(w => w.id === workerId);
-            
-            if (!worker) return;
-
-            if (passiveWorkersData[workerId]?.owned) return;
-            
-            if (balance < worker.price) {
-                messageBox.textContent = `Недостаточно средств для покупки ${worker.name}. Нужно ${formatCurrency(worker.price)}.`;
-                messageBox.classList.remove('hidden');
-                setTimeout(() => { messageBox.classList.add('hidden'); }, 3000);
-                return;
-            }
-
-            // Вычитаем цену
-            balance -= worker.price;
-            
-            passiveWorkersData[workerId] = {
-                owned: true,
-                lastIncomeTime: Date.now() 
-            };
-            
-            saveState();
-
-            messageBox.textContent = `🎉 Вы купили "${worker.name}"! Он начинает приносить ${worker.incomePerSecond} ₽/сек.`;
-            messageBox.classList.remove('hidden');
-            
-            setTimeout(() => {
-                messageBox.classList.add('hidden');
-            }, 3000);
+        /** Обработчик переключения активности работника */
+        const handleWorkerToggleClick = (event) => {
+             const workerId = event.target.dataset.id;
+             toggleWorkerActive(workerId);
         };
         
         // --- Quest Logic ---
@@ -826,7 +933,7 @@
             if (quest.type === 'level') {
                 isReadyToClaim = level >= quest.requirement && !isCompleted;
                 reqText = `Ур. ${level}/${quest.requirement}`;
-            } else { // 'wins'
+            } else { 
                 isReadyToClaim = questProgress.wins >= quest.requirement && !isCompleted;
                 reqText = `${questProgress.wins}/${quest.requirement} побед`;
             }
@@ -839,13 +946,11 @@
                 return;
             }
             
-            // Начисляем награду
             balance += quest.reward;
             
-            // Начисляем XP, если есть награда XP и мы не на MAX_LEVEL
             if (quest.xpReward > 0 && level < MAX_LEVEL) {
                 xp += quest.xpReward;
-                checkLevelUp(); // Проверяем, достаточно ли XP для повышения уровня
+                checkLevelUp(); 
             }
             
             questProgress.completed[questId] = true;
@@ -901,6 +1006,7 @@
             gameTabButton = document.getElementById('game-tab');
             workTabButton = document.getElementById('work-tab');
             workListElement = document.getElementById('work-list');
+            caseOpeningModal = document.getElementById('case-opening-modal');
 
             // Загружаем состояние и запускаем циклы
             loadState();
@@ -967,9 +1073,32 @@
             will-change: transform; 
         }
 
+        /* Case Opening Animation */
+        @keyframes bounce-in {
+            0% { transform: scale(0.5); opacity: 0; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(1); }
+        }
+        .animate-bounce-in {
+            animation: bounce-in 0.5s ease-out forwards;
+        }
+
     </style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-4">
+
+    <!-- Case Opening Modal (Hidden by default) -->
+    <div id="case-opening-modal" class="hidden fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 p-8 rounded-xl max-w-sm w-full text-center shadow-2xl border border-indigo-600">
+            <h2 class="text-3xl font-extrabold text-white mb-6">
+                🎉 НОВЫЙ РАБОТНИК!
+            </h2>
+            <div id="case-result-content">
+                <!-- Content generated by JS animation -->
+            </div>
+        </div>
+    </div>
+
 
     <!-- Main Game Container -->
     <div id="game-container" class="w-full max-w-md bg-gray-800 shadow-2xl rounded-xl p-6 border border-gray-700">
@@ -1067,10 +1196,10 @@
             <!-- WORK VIEW (Jobs and Quests) -->
             <div id="work-content" class="hidden">
                  <p class="text-sm text-gray-400 mb-4">
-                     Выполняйте работу и задания, чтобы пополнить свой баланс и быстрее повысить уровень.
+                     Выполняйте работу, открывайте кейсы с Работниками и выполняйте задания.
                  </p>
                  <div id="work-list" class="space-y-3">
-                     <!-- Job and Quest cards will be rendered here -->
+                     <!-- Content generated by renderWorkView -->
                      <div class="text-center text-gray-500 p-4">Загрузка данных...</div>
                  </div>
             </div>
