@@ -39,7 +39,7 @@
 
         // Конфигурация Промокодов
         const PROMO_CODES = {
-            'MerryCristmas': {
+            'MERRYCRISTMAS': { // Коды теперь проверяются в верхнем регистре
                 reward: 'CASE_JOBERS',
                 description_ru: 'Подарок: 1 Кейс "Jobers"',
             }
@@ -329,31 +329,43 @@
                  }
             }, 5000);
         };
+        
+        /** Добавляет анимацию тряски к полю ввода промокода */
+        const shakeInput = () => {
+            if (promoCodeInputElement) {
+                promoCodeInputElement.classList.add('animate-shake');
+                setTimeout(() => {
+                    promoCodeInputElement.classList.remove('animate-shake');
+                }, 500);
+            }
+        };
 
         /** Активирует промокод */
         const redeemPromoCode = (code) => {
             code = code.trim();
-            const upperCaseCode = code.toUpperCase();
-            const codeData = PROMO_CODES[code];
+            const upperCaseCode = code.toUpperCase(); // Проверяем верхний регистр
+            const codeData = PROMO_CODES[upperCaseCode]; // Ищем по верхнему регистру
             
             if (!code) {
                 setWorkMessage('Пожалуйста, введите промокод.', 'text-red-400');
+                shakeInput();
                 return;
             }
 
             if (!codeData) {
                 setWorkMessage('Неверный промокод.', 'text-red-400');
+                shakeInput();
                 return;
             }
             
-            if (usedPromoCodes.includes(code)) {
+            if (usedPromoCodes.includes(upperCaseCode)) {
                 setWorkMessage(`Промокод "${code}" уже использован.`, 'text-red-400');
+                shakeInput();
                 return;
             }
 
             // --- Применяем награду ---
             if (codeData.reward === 'CASE_JOBERS') {
-                // Выдаем бесплатного работника (без вычета цены)
                 
                 // 1. Ролл редкости
                 const rolledTier = rollRarity();
@@ -375,22 +387,17 @@
                     lore: rolledTier.lore
                 };
                 
-                workerInventory.push(newWorker);
-
-                // 4. Отмечаем как использованный и сохраняем
-                usedPromoCodes.push(code);
-                saveState();
+                // 4. Запуск анимации открытия кейса (имитация)
+                usedPromoCodes.push(upperCaseCode); // Отмечаем как использованный до анимации
+                animateCaseOpening(newWorker); // Анимация сама добавит в инвентарь и сохранит
                 
-                const colorClass = getRarityColorClass(newWorker.rarity);
-                setWorkMessage(`✅ Промокод активирован! Вы получили ${newWorker.rarity} Работника (${newWorker.income} ₽/сек)!`, colorClass);
+                setWorkMessage(`✅ Промокод активирован! Смотрите результат в окне!`, 'text-green-400');
 
                 // Очистка ввода
                 if (promoCodeInputElement) {
                     promoCodeInputElement.value = '';
                 }
 
-                // Перерисовка представления для отображения нового работника
-                renderWorkView();
             } else {
                 setWorkMessage('Ошибка: Неизвестная награда промокода.', 'text-red-400');
             }
@@ -487,17 +494,14 @@
                 `;
                 
                 // Добавляем работника в инвентарь и сохраняем
-                // Если работник был добавлен через промокод, он уже в инвентаре, просто сохраняем
-                if (!workerInventory.includes(newWorker)) {
-                     workerInventory.push(newWorker);
-                }
+                workerInventory.push(newWorker);
                 saveState();
 
                 // Обработчик закрытия модального окна
                 document.getElementById('close-case-btn').addEventListener('click', () => {
                     modal.classList.add('hidden');
                     isCaseOpening = false;
-                    setView('WORK'); // Переходим в режим работы, чтобы увидеть инвентарь
+                    setView('WORK'); // Переходим в режим работы, чтобы увидеть инвентарь (запустит full render)
                 });
                 
             }, 2500); 
@@ -527,16 +531,15 @@
             }
 
             saveState();
-            renderWorkView();
+            _renderFullWorkView(); // Полная перерисовка при изменении инвентаря
         };
 
 
-        /** Рендерит список работ и квестов */
-        const renderWorkView = () => {
+        /** Рендерит список работ и квестов (ПОЛНАЯ ПЕРЕРИСОВКА - вызывается при смене вкладки или изменении состояния) */
+        const _renderFullWorkView = () => {
             if (!workListElement) return;
 
             workListElement.innerHTML = ''; // Очистка
-            const now = Date.now();
             
             // --- 0. Промокоды (НОВЫЙ РАЗДЕЛ) ---
             const promoTitle = document.createElement('h3');
@@ -548,8 +551,8 @@
             promoCard.className = 'bg-gray-700 p-4 rounded-lg shadow-md mb-3';
             promoCard.innerHTML = `
                 <div class="flex flex-col space-y-2 sm:flex-row sm:space-y-0 sm:space-x-2">
-                    <input type="text" id="promo-code-input" placeholder="Введите промокод (например, MerryCristmas)"
-                        class="flex-1 p-2 rounded-lg bg-gray-900 text-white border border-gray-600 uppercase" />
+                    <input type="text" id="promo-code-input" placeholder="Введите промокод (например, MERRYCRISTMAS)"
+                        class="flex-1 p-2 rounded-lg bg-gray-900 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-pink-500 uppercase" />
                     <button id="redeem-promo-btn" 
                             class="px-4 py-2 text-sm rounded-lg font-semibold text-white transition bg-pink-600 hover:bg-pink-700 active:bg-pink-800">
                         Активировать
@@ -654,55 +657,14 @@
             manualTitle.className = 'text-lg font-bold text-indigo-400 mb-3 mt-6 border-b border-gray-700 pb-1';
             manualTitle.textContent = 'Ручные Работы (Кулдаун)';
             workListElement.appendChild(manualTitle);
-
-            MANUAL_JOBS.forEach(job => {
-                const isLocked = level < job.level; 
-                
-                const lastRun = jobCooldowns[job.level] || 0;
-                const timeRemaining = lastRun + job.cooldown - now;
-                const isReady = timeRemaining <= 0;
-                
-                const isDisabled = isLocked || !isReady || job.salary === 0; 
-                
-                const buttonText = isLocked 
-                    ? `Требуется Ур. ${job.level}`
-                    : (job.salary === 0 ? job.name : (isReady ? 'Взять Работу' : formatTimeDifference(timeRemaining)));
-
-                const buttonClass = isLocked 
-                    ? 'bg-red-900 text-red-300 cursor-not-allowed'
-                    : (isDisabled 
-                        ? 'bg-gray-600 cursor-not-allowed'
-                        : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800');
-
-                const levelClass = job.level <= 5 ? 'text-green-400' : 'text-yellow-400';
-                
-                const jobCard = document.createElement('div');
-                jobCard.className = 'flex items-center justify-between bg-gray-700 p-4 rounded-lg shadow-md mb-3';
-                jobCard.innerHTML = `
-                    <div>
-                        <p class="text-lg font-bold text-white">${job.name} (Ур. ${job.level})</p>
-                        <p class="text-sm ${levelClass}">Зарплата: ${formatCurrency(job.salary)} <span class="text-xs text-indigo-300 ml-2">+${job.xpReward} XP</span></p>
-                    </div>
-                    <div class="text-right">
-                        ${!isLocked ? `<p class="text-xs text-gray-400 mb-1">Кулдаун: ${formatTimeDifference(job.cooldown)}</p>` : `<p class="text-xs text-red-400 mb-1">Недоступно</p>`}
-                        <button id="job-btn-${job.level}" 
-                                class="manual-job-button px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${buttonClass}"
-                                data-level="${job.level}"
-                                ${isDisabled ? 'disabled' : ''}>
-                            ${buttonText}
-                        </button>
-                    </div>
-                `;
-                workListElement.appendChild(jobCard);
-            });
             
-            // Re-attach event listeners
-            document.querySelectorAll('.manual-job-button').forEach(button => {
-                button.removeEventListener('click', handleJobClick);
-                if (!button.disabled) {
-                    button.addEventListener('click', handleJobClick);
-                }
-            });
+            // Создаем контейнер для работ, чтобы обновлять его отдельно
+            const jobListContainer = document.createElement('div');
+            jobListContainer.id = 'manual-job-list-container';
+            workListElement.appendChild(jobListContainer);
+            
+            // Запускаем первоначальный рендер работ
+            _renderJobsList(jobListContainer);
             
             // --- 4. Квесты ---
             const questTitle = document.createElement('h3');
@@ -781,6 +743,118 @@
                 }
             });
         };
+        
+        /** Рендерит список ручных работ (вызывается из _renderFullWorkView) */
+        const _renderJobsList = (container) => {
+            const now = Date.now();
+            container.innerHTML = ''; // Очистка контейнера работ
+            
+            MANUAL_JOBS.forEach(job => {
+                const isLocked = level < job.level; 
+                
+                const lastRun = jobCooldowns[job.level] || 0;
+                const timeRemaining = lastRun + job.cooldown - now;
+                const isReady = timeRemaining <= 0;
+                
+                const isDisabled = isLocked || !isReady || job.salary === 0; 
+                
+                const buttonText = isLocked 
+                    ? `Требуется Ур. ${job.level}`
+                    : (job.salary === 0 ? job.name : (isReady ? 'Взять Работу' : formatTimeDifference(timeRemaining)));
+
+                const buttonClass = isLocked 
+                    ? 'bg-red-900 text-red-300 cursor-not-allowed'
+                    : (isDisabled 
+                        ? 'bg-gray-600 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800');
+
+                const levelClass = job.level <= 5 ? 'text-green-400' : 'text-yellow-400';
+                
+                const jobCard = document.createElement('div');
+                jobCard.className = 'flex items-center justify-between bg-gray-700 p-4 rounded-lg shadow-md mb-3';
+                jobCard.innerHTML = `
+                    <div>
+                        <p class="text-lg font-bold text-white">${job.name} (Ур. ${job.level})</p>
+                        <p class="text-sm ${levelClass}">Зарплата: ${formatCurrency(job.salary)} <span class="text-xs text-indigo-300 ml-2">+${job.xpReward} XP</span></p>
+                    </div>
+                    <div class="text-right">
+                        ${!isLocked ? `<p id="job-cooldown-text-${job.level}" class="text-xs text-gray-400 mb-1">Кулдаун: ${formatTimeDifference(job.cooldown)}</p>` : `<p class="text-xs text-red-400 mb-1">Недоступно</p>`}
+                        <button id="job-btn-${job.level}" 
+                                class="manual-job-button px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${buttonClass}"
+                                data-level="${job.level}"
+                                ${isDisabled ? 'disabled' : ''}>
+                            ${buttonText}
+                        </button>
+                    </div>
+                `;
+                container.appendChild(jobCard);
+            });
+            
+            // Re-attach event listeners after initial render
+            document.querySelectorAll('.manual-job-button').forEach(button => {
+                button.removeEventListener('click', handleJobClick);
+                if (!button.disabled) {
+                    button.addEventListener('click', handleJobClick);
+                }
+            });
+        };
+        
+        /** Обновляет только таймеры ручных работ (ВЫЗЫВАЕТСЯ КАЖДУЮ СЕКУНДУ) */
+        const updateWorkViewTimers = () => {
+            if (currentView !== 'WORK') return;
+            
+            const now = Date.now();
+            
+            document.querySelectorAll('.manual-job-button').forEach(button => {
+                const levelId = parseInt(button.dataset.level);
+                const job = MANUAL_JOBS.find(j => j.level === levelId);
+                
+                if (!job || level < job.level) return; // Пропускаем заблокированные или несуществующие
+
+                const lastRun = jobCooldowns[job.level] || 0;
+                const timeRemaining = lastRun + job.cooldown - now;
+                const isReady = timeRemaining <= 0;
+                
+                const isDisabled = level < job.level || !isReady || job.salary === 0; 
+                
+                const buttonText = level < job.level 
+                    ? `Требуется Ур. ${job.level}`
+                    : (job.salary === 0 ? job.name : (isReady ? 'Взять Работу' : formatTimeDifference(timeRemaining)));
+
+                const buttonClass = level < job.level 
+                    ? 'bg-red-900 text-red-300 cursor-not-allowed'
+                    : (isDisabled 
+                        ? 'bg-gray-600 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800');
+
+                // 1. Обновляем текст кнопки
+                if (button.textContent !== buttonText) {
+                    button.textContent = buttonText;
+                }
+                
+                // 2. Обновляем класс кнопки, если он изменился (вкл/выкл)
+                if (button.classList.contains('bg-indigo-600') !== (!isDisabled && !button.classList.contains('bg-indigo-600'))) {
+                    // Простая перерисовка классов, чтобы не трогать лишнего
+                    button.className = `manual-job-button px-4 py-2 text-sm rounded-lg font-semibold text-white transition ${buttonClass}`;
+                }
+
+                // 3. Обновляем disabled состояние
+                button.disabled = isDisabled;
+                
+                // 4. Обновляем текст кулдоуна
+                const cooldownTextElement = document.getElementById(`job-cooldown-text-${job.level}`);
+                if (cooldownTextElement) {
+                     cooldownTextElement.textContent = `Кулдаун: ${formatTimeDifference(job.cooldown)}`;
+                }
+                
+                // 5. Повторно прикрепляем обработчик, если он стал доступен
+                if (isReady && !button.disabled) {
+                    // Удаляем старый и добавляем новый (гарантирует, что обработчик будет только один)
+                    button.removeEventListener('click', handleJobClick);
+                    button.addEventListener('click', handleJobClick);
+                }
+            });
+        };
 
         /** Устанавливает текущее представление и обновляет UI */
         const setView = (view) => {
@@ -801,7 +875,9 @@
                 workTabButton.classList.add('border-indigo-500', 'text-white');
                 gameTabButton.classList.remove('border-indigo-500', 'text-white');
                 gameTabButton.classList.add('border-transparent', 'text-gray-400');
-                renderWorkView(); 
+                
+                // Полная перерисовка только при ПЕРЕХОДЕ на вкладку "Работа"
+                _renderFullWorkView(); 
             }
         };
 
@@ -878,9 +954,8 @@
                 } else if (gameState !== 'IDLE') {
                     messageBox.classList.add('hidden');
                 }
-            } else if (currentView === 'WORK') {
-                renderWorkView();
-            }
+            } 
+            // Work view updates are handled by the timer function and explicit calls.
         };
 
         // --- Game Logic (Crash) ---
@@ -1046,9 +1121,10 @@
             messageBox.textContent = `Работа "${job.name}" выполнена! Заработано ${formatCurrency(job.salary)}. Получено ${job.xpReward} XP.`;
             messageBox.classList.remove('hidden');
             
+            // После выполнения работы, нужно обновить только таймеры
             setTimeout(() => {
                 messageBox.classList.add('hidden');
-                if (currentView === 'WORK') renderWorkView(); // Обновляем кулдоун в UI
+                if (currentView === 'WORK') updateWorkViewTimers(); 
             }, 3000);
         };
         
@@ -1105,6 +1181,7 @@
             
             setTimeout(() => {
                 messageBox.classList.add('hidden');
+                if (currentView === 'WORK') _renderFullWorkView(); // Полная перерисовка квестов
             }, 3000);
         };
 
@@ -1122,10 +1199,10 @@
         
         /** Запускает таймер для обновления кулдоунов в представлении "Работа" */
         const startWorkViewTimer = () => {
-             // Обновляем представление работы каждую секунду
+             // Обновляем только таймеры ручных работ каждую секунду
              setInterval(() => {
                  if (currentView === 'WORK') {
-                     renderWorkView();
+                     updateWorkViewTimers();
                  }
              }, 1000);
         };
@@ -1222,6 +1299,19 @@
         }
         .animate-bounce-in {
             animation: bounce-in 0.5s ease-out forwards;
+        }
+        
+        /* НОВОЕ: Анимация тряски для неверного промокода */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
+        .animate-shake {
+            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+            transform: translate3d(0, 0, 0);
+            backface-visibility: hidden;
+            perspective: 1000px;
         }
 
     </style>
@@ -1340,7 +1430,7 @@
                      Выполняйте работу, открывайте кейсы с Работниками и выполняйте задания.
                  </p>
                  <div id="work-list" class="space-y-3">
-                     <!-- Content generated by renderWorkView -->
+                     <!-- Content generated by _renderFullWorkView / updateWorkViewTimers -->
                      <div class="text-center text-gray-500 p-4">Загрузка данных...</div>
                  </div>
             </div>
